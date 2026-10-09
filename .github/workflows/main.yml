@@ -1,0 +1,73 @@
+name: CI and CD
+
+# main is this repository's equivalent of the exercise's master branch.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Share the release lock with rollback so latest tags cannot race.
+concurrency:
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'dockerhub-release' || format('ci-{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test-backend:
+    uses: ./.github/workflows/test-backend.yml
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  test-frontend:
+    uses: ./.github/workflows/test-frontend.yml
+
+  publish-backend:
+    # Both test jobs must pass before any image is published.
+    needs: [test-backend, test-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/publish-docker.yml
+    with:
+      context: ./simple-api
+      image: tp-devops-simple-api
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  publish-database:
+    # Both test jobs must pass before any image is published.
+    needs: [test-backend, test-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/publish-docker.yml
+    with:
+      context: ./database
+      image: tp-devops-database
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  publish-httpd:
+    # Both test jobs must pass before any image is published.
+    needs: [test-backend, test-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/publish-docker.yml
+    with:
+      context: ./http-server
+      image: tp-devops-httpd
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  publish-front:
+    # Both test jobs must pass before any image is published.
+    needs: [test-backend, test-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/publish-docker.yml
+    with:
+      context: ./front
+      image: tp-devops-front
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

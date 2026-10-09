@@ -1,0 +1,59 @@
+name: Rollback Docker images
+
+# Restore a previously published release without rebuilding its source.
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full 40-character commit SHA of the working release to restore
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Normal main publication and rollback must not update latest concurrently.
+concurrency:
+  group: dockerhub-release
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - name: Validate release SHA
+        run: |
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::Enter a full lowercase 40-character commit SHA.'
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Check the whole release before changing any latest tag.
+      - name: Verify all release images exist
+        run: |
+          for image in tp-devops-simple-api tp-devops-database tp-devops-httpd tp-devops-front; do
+            docker buildx imagetools inspect "$DOCKERHUB_USERNAME/$image:$RELEASE_SHA" > /dev/null
+          done
+
+      - name: Restore latest tags to the selected release
+        run: |
+          for image in tp-devops-simple-api tp-devops-database tp-devops-httpd tp-devops-front; do
+            docker buildx imagetools create --prefer-index=false \
+              --tag "$DOCKERHUB_USERNAME/$image:latest" \
+              "$DOCKERHUB_USERNAME/$image:$RELEASE_SHA"
+            echo "Restored $image to $RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          done
