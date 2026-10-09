@@ -35,22 +35,21 @@ written to `simple-api/target/surefire-reports` and
 
 This repository uses `main` where the exercise says `master`.
 
-| Event | Backend and frontend tests | SonarCloud gate | Docker Hub publication |
-| --- | --- | --- | --- |
-| Push to `main` | Yes | Required | Only after tests and gate pass |
-| Push to `develop` | Yes | Required | No |
-| Same-repository PR to `main` or `develop` | Yes | Required | No |
-| Fork or Dependabot PR to `main` or `develop` | Yes | Unavailable without secrets | No |
+| Event | Backend and frontend tests | Docker Hub publication |
+| --- | --- | --- |
+| Push to `main` | Yes | Only after tests pass |
+| Push to `develop` | Yes | No |
+| PR to `main` or `develop` | Yes | No |
 
-The entry point exposes five jobs: `test-backend`, `test-frontend`,
-`publish-backend`, `publish-database`, and `publish-frontend`. The two test jobs
-run in parallel through reusable workflows. The backend runs Maven tests and
-SonarCloud; the frontend builds Apache, checks its configuration with `httpd -t`,
-and verifies HTTP forwarding to a mock backend. There is no separate frontend UI
-application in this repository.
+The entry point exposes six jobs: `test-backend`, `test-frontend`,
+`publish-backend`, `publish-database`, `publish-httpd`, and `publish-front`. The
+two test jobs run in parallel through reusable workflows. The backend runs Maven
+tests; the frontend job builds the Vue front image, checks the Apache
+configuration with `httpd -t`, and verifies that Apache sends `/api/` to a mock
+backend and `/` to the front.
 
 Each publishing job calls `publish-docker.yml` with its own context and image
-name. All three require both test jobs to pass and run only on pushes to `main`.
+name. All of them require both test jobs to pass and run only on pushes to `main`.
 They run independently in parallel and build the same commit that passed CI.
 Publication is not atomic: if one image job fails, another may already have
 published its image. Use matching SHA tags when selecting a release.
@@ -63,6 +62,7 @@ Each `docker/build-push-action` step has its own build context:
 | `simple-api` | `<username>/tp-devops-simple-api` |
 | `database` | `<username>/tp-devops-database` |
 | `http-server` | `<username>/tp-devops-httpd` |
+| `front` | `<username>/tp-devops-front` |
 
 Each image receives `latest` and a full Git commit SHA tag. The SHA tag lets you
 select a specific tested revision for deployment or rollback. Building and
@@ -73,7 +73,7 @@ pushing an image does not deploy or restart an application.
 In GitHub, open **Actions → Rollback Docker images → Run workflow**, select
 `main`, and enter the full 40-character lowercase commit SHA of a previously
 published working release. The workflow uses the existing Docker Hub secrets.
-It checks that all three SHA-tagged images exist, then restores their `latest`
+It checks that all SHA-tagged images exist, then restores their `latest`
 tags to those images without rebuilding. The selected SHA tags stay available.
 Normal main publication and rollback share a concurrency lock to prevent them
 from updating tags at the same time.
@@ -86,7 +86,7 @@ A nonexistent SHA fails the checks before any tags are changed.
 This is a manual registry rollback. It does not deploy containers, restart an
 application, or restore database data. A deployed application must pull the
 restored images and recreate its containers separately. Tag updates across
-three repositories are not atomic; if an update fails partway through, rerun
+repositories are not atomic; if an update fails partway through, rerun
 the rollback. A later successful main pipeline will publish a new `latest`.
 
 ### Configure accounts before enabling delivery
@@ -97,50 +97,12 @@ Secrets and variables → Actions** and add these **repository secrets**:
 | Secret | Value |
 | --- | --- |
 | `DOCKERHUB_USERNAME` | Your lowercase Docker Hub username |
-| `DOCKERHUB_TOKEN` | A Docker Hub access token with permission to push to the three repositories |
-| `SONAR_TOKEN` | A SonarCloud token with permission to analyze this project |
-
-Under the **Variables** tab, add these non-secret repository variables:
-
-| Variable | Value |
-| --- | --- |
-| `SONAR_PROJECT_KEY` | The project key shown in SonarCloud |
-| `SONAR_ORGANIZATION` | The organization key shown in SonarCloud |
+| `DOCKERHUB_TOKEN` | A Docker Hub access token with permission to push to the image repositories |
 
 Use repository-level settings: these reusable workflows do not select a GitHub
 Environment. Do not commit tokens or put them in Dockerfiles, build arguments,
-or ordinary repository variables. Create the three Docker Hub repositories under
+or ordinary repository variables. Create the Docker Hub repositories under
 the configured username, with the visibility you want.
-
-### SonarCloud quality gate
-
-1. Sign in to SonarCloud, create or select your organization, and import this
-   GitHub repository. Set its main branch to `main` and record both keys.
-2. Select CI-based analysis with GitHub Actions and disable Automatic Analysis
-   for this project to avoid conflicting analysis methods.
-3. Select the built-in **Sonar way** quality gate in the project settings and
-   configure the new-code definition for the project. Conditions are managed
-   in SonarCloud; this repository enforces the resulting gate status.
-4. Add the token and variables listed above. For this public project, check
-   eligibility for the free **OSS plan**, which supports branch and pull-request
-   analysis. The standard Free plan limits branch analysis to the main branch;
-   it cannot run this pipeline's `develop` analysis.
-5. When you choose to push these changes, check the Actions run and the linked
-   SonarCloud dashboard. A failed gate or a five-minute gate timeout must fail
-   `test-backend` and skip Docker publication.
-
-The scanner runs after `mvn -B clean verify`, reusing compiled classes and the
-JaCoCo XML report at `simple-api/target/site/jacoco/jacoco.xml`. JaCoCo's report
-goal runs in `verify` so it includes integration-test coverage too. The scanner
-version is pinned, authentication comes from `SONAR_TOKEN`, and
-`sonar.qualitygate.wait=true` turns the analysis result into a CI requirement.
-Missing credentials or keys fail trusted runs with a setup error. Fork and
-Dependabot PRs run tests without analysis; every push to `main` still requires
-the gate before publication.
-
-To stop failing code from being merged, configure a GitHub branch ruleset for
-`main` requiring pull requests and the backend workflow's check. The workflow
-alone blocks delivery, but cannot prevent a direct push to the branch.
 
 ### Exercise answers
 

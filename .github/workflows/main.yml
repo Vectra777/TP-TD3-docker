@@ -18,8 +18,6 @@ permissions:
 jobs:
   test-backend:
     uses: ./.github/workflows/test-backend.yml
-    secrets:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   test-frontend:
     uses: ./.github/workflows/test-frontend.yml

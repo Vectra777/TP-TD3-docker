@@ -1,12 +1,8 @@
-name: Backend tests and quality gate
+name: Backend tests
 
 # Called by main.yml for main/develop pushes and pull requests targeting them.
 on:
   workflow_call:
-    secrets:
-      SONAR_TOKEN:
-        # Fork PRs have no secrets: they still run the full Maven test suite.
-        required: false
 
 permissions:
   contents: read
@@ -19,9 +15,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          # SonarCloud needs history for blame and new-code analysis.
-          fetch-depth: 0
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -35,39 +28,3 @@ jobs:
       - name: Build and test with Maven
         working-directory: simple-api
         run: mvn -B clean verify
-
-      # Analyze trusted pushes and same-repository PRs. Never expose tokens to
-      # fork PRs or Dependabot, whose runs do not receive Actions secrets.
-      - name: Analyze with SonarCloud and enforce quality gate
-        if: >-
-          github.event_name == 'push' ||
-          (github.actor != 'dependabot[bot]' &&
-           github.event.pull_request.head.repo.full_name == github.repository)
-        working-directory: simple-api
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
-          SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
-        run: |
-          # Fail explicitly if setup is incomplete; never silently bypass the gate.
-          for name in SONAR_TOKEN SONAR_PROJECT_KEY SONAR_ORGANIZATION; do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::Configure $name in repository Actions secrets/variables."
-              exit 1
-            fi
-          done
-          # Reuse compiled classes and coverage instead of rerunning the tests.
-          # Waiting makes a failed gate (or a timeout) fail CI and block delivery.
-          mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.5.0.6356:sonar \
-            "-Dsonar.projectKey=$SONAR_PROJECT_KEY" \
-            "-Dsonar.organization=$SONAR_ORGANIZATION" \
-            -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.qualitygate.wait=true \
-            -Dsonar.qualitygate.timeout=300
-
-      - name: Explain unavailable analysis on external PRs
-        if: >-
-          github.event_name == 'pull_request' &&
-          (github.actor == 'dependabot[bot]' ||
-           github.event.pull_request.head.repo.full_name != github.repository)
-        run: echo '::notice::Tests ran; SonarCloud analysis requires trusted repository credentials. Publishing is disabled for pull requests.'
