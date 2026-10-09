@@ -1,126 +1,121 @@
-# TP DevOps Correction Docker
+# TP DevOps – Docker, GitHub Actions, Ansible
 
-Correction de la partie Docker du module DevOps. Amusez-vous bien avec GitHub Actions !
+A student/department app: PostgreSQL database, Spring Boot API, Vue front, and an
+Apache httpd reverse proxy. CI builds and publishes the images to Docker Hub,
+Ansible deploys them on the server.
 
-
-## First CI with backend tests
-
-The [CI/CD entry point](.github/workflows/main.yml) runs on pushes to `main`
-and `develop`, and on pull requests targeting either branch. Its reusable
-[backend workflow](.github/workflows/test-backend.yml) checks out the repository, sets up Temurin JDK 21
-on Ubuntu 24.04, and caches Maven dependencies using `simple-api/pom.xml` as
-the cache dependency file. The workflow only requests read access to repository
-contents.
-
-The build runs `mvn -B clean verify` inside `simple-api`. Surefire runs unit
-tests and Failsafe runs integration tests; a failure in either suite fails CI.
-Testcontainers starts a temporary PostgreSQL database using the runner's Docker
-daemon. Version 1.21.4 supports recent Docker APIs, fixing the startup failure
-caused by the old client's API version 1.32.
-
-To run the same checks locally, install JDK 21 and Maven, start Docker, then run:
-
-```sh
-cd simple-api
-mvn -B clean verify
+```
+browser ──▶ httpd :80 ──┬─ /api/ ─▶ simple-api :8080 ──▶ database :5432
+                        └─ /     ─▶ front :80
 ```
 
-Results are available in the repository's Actions tab. Local test reports are
-written to `simple-api/target/surefire-reports` and
-`simple-api/target/failsafe-reports`.
+## Layout
 
+| Path | Content |
+| --- | --- |
+| `database/` | Postgres image with init SQL scripts |
+| `simple-api/` | Spring Boot API |
+| `front/` | Vue front (served by nginx) |
+| `http-server/` | Apache reverse proxy config |
+| `docker-compose.yaml` | Run everything locally |
+| `.github/workflows/` | CI/CD |
+| `inventories/`, `roles/`, `playbook.yaml` | Ansible deployment |
 
+## Run locally
 
-## Continuous delivery and split workflows
+```sh
+docker compose up --build
+```
 
-This repository uses `main` where the exercise says `master`.
+## CI/CD
 
-| Event | Backend and frontend tests | Docker Hub publication |
+On push or PR to `main`/`develop`:
+
+1. `test-backend` runs `mvn clean verify` (unit + integration tests).
+2. `test-frontend` builds the front, checks the Apache config, and checks that
+   `/api/` and `/` are proxied to the right container.
+3. On `main` only, once tests pass, the four images are pushed to Docker Hub
+   with tags `latest` and the commit SHA.
+
+`rollback.yml` (manual) points `latest` back to the images of a given commit SHA.
+
+Required repository secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
+
+## Deploy with Ansible
+
+```sh
+ansible all -m ping                # test the connection
+ansible-playbook playbook.yaml     # install Docker and deploy the app
+```
+
+The app is then available at `http://valentin.belougne.takima.school`.
+
+## Answers
+
+### 3-1 Inventory and base commands
+
+`inventories/setup.yml` declares the server in a `prod` group, with the SSH user
+(`admin`) and private key. `ansible.cfg` sets it as the default inventory, so
+`-i` is not needed.
+
+```sh
+ansible all -m ping                                          # check connection
+ansible all -m setup -a "filter=ansible_distribution*"       # read OS facts
+ansible all -m apt -a "name=apache2 state=absent" --become   # remove apache2
+```
+
+Ansible describes the desired state: running the last command twice changes
+nothing the second time.
+
+### 3-2 Playbook
+
+`playbook.yaml` has two plays:
+
+1. **Install Docker** (`docker` role): checks the host is Debian, adds Docker's
+   APT repository and key, installs Docker Engine, installs the Docker SDK for
+   Python in `/opt/docker_venv`, and makes sure the service is started and
+   enabled. A handler restarts Docker when the packages change.
+2. **Deploy the app**: runs the `network`, `database`, `app`, `front` and
+   `proxy` roles. This play sets `ansible_python_interpreter` to
+   `/opt/docker_venv/bin/python`, because the Docker modules need the Docker
+   SDK installed there.
+
+### 3-3 docker_container tasks
+
+Shared variables are in `inventories/group_vars/all.yml` (Docker Hub user,
+network name, DB credentials).
+
+| Role | Module | Config |
 | --- | --- | --- |
-| Push to `main` | Yes | Only after tests pass |
-| Push to `develop` | Yes | No |
-| PR to `main` or `develop` | Yes | No |
+| network | `docker_network` | creates `app-network` |
+| database | `docker_container` | `tp-devops-database`, env `POSTGRES_DB/USER/PASSWORD`, volume `db-volume` for data |
+| app | `docker_container` | `tp-devops-simple-api`, env `DATABASE_HOST=database` and `DATABASE_PASSWORD` (read by `application.yml`) |
+| front | `docker_container` | `tp-devops-front` |
+| proxy | `docker_container` | `tp-devops-httpd`, publishes port `80:80` |
 
-The entry point exposes six jobs: `test-backend`, `test-frontend`,
-`publish-backend`, `publish-database`, `publish-httpd`, and `publish-front`. The
-two test jobs run in parallel through reusable workflows. The backend runs Maven
-tests; the frontend job builds the Vue front image, checks the Apache
-configuration with `httpd -t`, and verifies that Apache sends `/api/` to a mock
-backend and `/` to the front.
+All containers join `app-network` so they reach each other by container name,
+use `pull: always` to get the latest image, and `restart_policy: unless-stopped`.
+Only the proxy exposes a port.
 
-Each publishing job calls `publish-docker.yml` with its own context and image
-name. All of them require both test jobs to pass and run only on pushes to `main`.
-They run independently in parallel and build the same commit that passed CI.
-Publication is not atomic: if one image job fails, another may already have
-published its image. Use matching SHA tags when selecting a release.
+### Is it safe to deploy every new image automatically?
 
-Each publishing job uses Docker Buildx and logs in with `docker/login-action`.
-Each `docker/build-push-action` step has its own build context:
+Not completely. Anything that ends up as `latest` on Docker Hub goes to
+production: a bad commit that passes tests, a leaked Docker Hub token, or a
+compromised base image would all be deployed with no human check. To make it
+safer:
 
-| Context | Docker Hub image |
-| --- | --- |
-| `simple-api` | `<username>/tp-devops-simple-api` |
-| `database` | `<username>/tp-devops-database` |
-| `http-server` | `<username>/tp-devops-httpd` |
-| `front` | `<username>/tp-devops-front` |
+- deploy only after tests pass on `main`, and protect `main` (required reviews);
+- deploy a specific SHA tag instead of `latest`, so you know exactly what runs
+  and can roll back;
+- keep the SSH key and passwords in GitHub secrets / Ansible Vault, with a
+  dedicated, limited deploy user;
+- scan images for vulnerabilities and require a manual approval (GitHub
+  Environment) before production.
 
-Each image receives `latest` and a full Git commit SHA tag. The SHA tag lets you
-select a specific tested revision for deployment or rollback. Building and
-pushing an image does not deploy or restart an application.
+### Earlier parts
 
-### Manual rollback
-
-In GitHub, open **Actions → Rollback Docker images → Run workflow**, select
-`main`, and enter the full 40-character lowercase commit SHA of a previously
-published working release. The workflow uses the existing Docker Hub secrets.
-It checks that all SHA-tagged images exist, then restores their `latest`
-tags to those images without rebuilding. The selected SHA tags stay available.
-Normal main publication and rollback share a concurrency lock to prevent them
-from updating tags at the same time.
-
-To demonstrate the bonus, publish release A and then release B, run rollback
-with A's SHA, and verify that each image's `latest` digest matches its A tag in
-Docker Hub. The workflow summary records the restored version for each image.
-A nonexistent SHA fails the checks before any tags are changed.
-
-This is a manual registry rollback. It does not deploy containers, restart an
-application, or restore database data. A deployed application must pull the
-restored images and recreate its containers separately. Tag updates across
-repositories are not atomic; if an update fails partway through, rerun
-the rollback. A later successful main pipeline will publish a new `latest`.
-
-### Configure accounts before enabling delivery
-
-Credentials are not configured by this commit. In GitHub, open **Settings →
-Secrets and variables → Actions** and add these **repository secrets**:
-
-| Secret | Value |
-| --- | --- |
-| `DOCKERHUB_USERNAME` | Your lowercase Docker Hub username |
-| `DOCKERHUB_TOKEN` | A Docker Hub access token with permission to push to the image repositories |
-
-Use repository-level settings: these reusable workflows do not select a GitHub
-Environment. Do not commit tokens or put them in Dockerfiles, build arguments,
-or ordinary repository variables. Create the Docker Hub repositories under
-the configured username, with the visibility you want.
-
-### Exercise answers
-
-**2-2  Why use secured variables?** GitHub Actions secrets keep credentials out
-of source code and Git history, encrypt them at rest, and make them available
-to the authorized workflow steps. They also mask known secret values in logs.
-Tokens can be rotated without changing the code; avoid printing them even with
-masking enabled.
-
-**2-3  Why `needs: [test-backend, test-frontend]`?** It orders publication after successful backend and frontend tests
-and quality analysis. Without it, jobs can run in parallel and publish images
-from code whose tests or gate later fail. The exercise's `build-and-test-backend`
-is named `test-backend` here; `needs` must match the actual job ID.
-
-**2-4  Why push Docker images?** A registry stores and distributes the built
-images so servers and teammates can pull the same application artifact without
-rebuilding the source. Version tags make deployments traceable and allow a
-previous image to be selected for rollback.
-
-
-
+- **2-2 Secured variables:** GitHub secrets keep credentials out of the code
+  and Git history, and are masked in logs.
+- **2-3 `needs`:** images are only published once both test jobs pass.
+- **2-4 Why push images:** the server pulls the exact tested image instead of
+  rebuilding it, and SHA tags allow rollback.
