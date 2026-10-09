@@ -1,6 +1,13 @@
 dockerhub_user: vectra777
 docker_network: app-network
-# ponytail: plaintext, move to ansible-vault before sharing the repo
 db_name: db
 db_user: usr
-db_password: pwd
+# Encrypted with ansible-vault; vault password is in ~/.ansible/tp-td3-vault-pass
+# (ANSIBLE_VAULT_PASSWORD secret in CI).
+db_password: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          34633433383230343932653063333235386664376231333738306331343761646230623933623433
+          6362383239646164303161646230393137303731643464350a646135646336653661313864643638
+          66613839353439653631386132666262376239383237393330353163643430336461633361383536
+          3733383863643237310a643434326335303038303430353066633939653535303962386336623761
+          3132

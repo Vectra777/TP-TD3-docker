@@ -69,3 +69,31 @@ jobs:
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  deploy:
+    # Runs only once every image of this commit is on Docker Hub.
+    needs: [publish-backend, publish-database, publish-httpd, publish-front]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: pipx install --include-deps ansible
+
+      - name: Write SSH key, known host and vault password
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+        run: |
+          install -m 700 -d ~/.ssh ~/.ansible
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          printf '%s\n' "$ANSIBLE_VAULT_PASSWORD" > ~/.ansible/tp-td3-vault-pass
+          chmod 600 ~/.ssh/id_rsa ~/.ansible/tp-td3-vault-pass
+          # ponytail: trusts the host key seen at deploy time; pin it in a secret to rule out MITM
+          ssh-keyscan -H valentin.belougne.takima.school >> ~/.ssh/known_hosts
+
+      - name: Deploy with Ansible
+        run: ansible-playbook playbook.yaml -e ansible_ssh_private_key_file="$HOME/.ssh/id_rsa"

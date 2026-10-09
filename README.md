@@ -36,16 +36,33 @@ On push or PR to `main`/`develop`:
    `/api/` and `/` are proxied to the right container.
 3. On `main` only, once tests pass, the four images are pushed to Docker Hub
    with tags `latest` and the commit SHA.
+4. On `main` only, once all images are pushed, `deploy` runs the Ansible
+   playbook against the server (continuous deployment).
 
 `rollback.yml` (manual) points `latest` back to the images of a given commit SHA.
 
-Required repository secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
+Required repository secrets:
+
+| Secret | Value |
+| --- | --- |
+| `DOCKERHUB_USERNAME` | Docker Hub username |
+| `DOCKERHUB_TOKEN` | Docker Hub access token (read/write) |
+| `SSH_PRIVATE_KEY` | Private key used to SSH to the server as `admin` |
+| `ANSIBLE_VAULT_PASSWORD` | Password that decrypts the vaulted variables |
 
 ## Deploy with Ansible
 
 ```sh
 ansible all -m ping                # test the connection
 ansible-playbook playbook.yaml     # install Docker and deploy the app
+```
+
+Secrets (DB password) are encrypted with Ansible Vault in
+`inventories/group_vars/all.yml`. `ansible.cfg` reads the vault password from
+`~/.ansible/tp-td3-vault-pass`. To encrypt a new value:
+
+```sh
+ansible-vault encrypt_string --name my_var 'value'
 ```
 
 The app is then available at `http://valentin.belougne.takima.school`.
@@ -83,7 +100,7 @@ nothing the second time.
 ### 3-3 docker_container tasks
 
 Shared variables are in `inventories/group_vars/all.yml` (Docker Hub user,
-network name, DB credentials).
+network name, DB credentials, with the password encrypted by Ansible Vault).
 
 | Role | Module | Config |
 | --- | --- | --- |
