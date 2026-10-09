@@ -89,9 +89,14 @@ jobs:
           ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
         run: |
           install -m 700 -d ~/.ssh ~/.ansible
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          printf '%s\n' "$ANSIBLE_VAULT_PASSWORD" > ~/.ansible/tp-td3-vault-pass
+          # Strip CRs that copy/paste into the secret UI can add.
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+          printf '%s\n' "$ANSIBLE_VAULT_PASSWORD" | tr -d '\r' > ~/.ansible/tp-td3-vault-pass
           chmod 600 ~/.ssh/id_rsa ~/.ansible/tp-td3-vault-pass
+          ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null || {
+            echo "::error::SSH_PRIVATE_KEY is not a valid private key ($(wc -l < ~/.ssh/id_rsa) lines). Paste the whole file, line breaks included."
+            exit 1
+          }
           # ponytail: trusts the host key seen at deploy time; pin it in a secret to rule out MITM
           ssh-keyscan -H valentin.belougne.takima.school >> ~/.ssh/known_hosts
 
