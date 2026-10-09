@@ -1,0 +1,11 @@
+---
+- name: Run httpd reverse proxy
+  community.docker.docker_container:
+    name: httpd
+    image: "{{ dockerhub_user }}/tp-devops-httpd:latest"
+    pull: always
+    restart_policy: unless-stopped
+    ports:
+      - "80:80"
+    networks:
+      - name: "{{ docker_network }}"

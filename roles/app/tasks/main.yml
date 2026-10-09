@@ -1,0 +1,12 @@
+---
+- name: Run simple-api
+  community.docker.docker_container:
+    name: simple-api
+    image: "{{ dockerhub_user }}/tp-devops-simple-api:latest"
+    pull: always
+    restart_policy: unless-stopped
+    env:
+      DATABASE_HOST: database
+      DATABASE_PASSWORD: "{{ db_password }}"
+    networks:
+      - name: "{{ docker_network }}"

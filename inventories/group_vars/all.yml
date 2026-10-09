@@ -1,0 +1,6 @@
+dockerhub_user: vectra777
+docker_network: app-network
+# ponytail: plaintext, move to ansible-vault before sharing the repo
+db_name: db
+db_user: usr
+db_password: pwd

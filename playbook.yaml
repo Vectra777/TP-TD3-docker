@@ -1,0 +1,22 @@
+- name: Install Docker Engine on Debian
+  hosts: all
+  gather_facts: true
+  become: true
+
+  roles:
+    - docker
+
+- name: Deploy application
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    #(installed by the docker role)
+    ansible_python_interpreter: /opt/docker_venv/bin/python
+
+  roles:
+    - network
+    - database
+    - app
+    - front
+    - proxy
