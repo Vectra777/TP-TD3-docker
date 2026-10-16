@@ -1,8 +1,6 @@
 # TP DevOps – Docker, GitHub Actions, Ansible
 
-A student/department app: PostgreSQL database, Spring Boot API, Vue front, and an
-Apache httpd reverse proxy. CI builds and publishes the images to Docker Hub,
-Ansible deploys them on the server.
+
 
 ```
 browser ──▶ httpd :80 ──┬─ /api/ ─▶ simple-api :8080 ──▶ database :5432
